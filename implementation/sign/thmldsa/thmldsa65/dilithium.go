@@ -26,7 +26,7 @@ const (
 	SignatureSize = internal.SignatureSize
 )
 
-// ThresholdParams contains parameters for threshold ML-DSA-44
+// ThresholdParams contains parameters for threshold ML-DSA-65
 type ThresholdParams internal.ThresholdParams
 
 func (params *ThresholdParams) ResponseSize() int {
@@ -37,7 +37,7 @@ func (params *ThresholdParams) CommitmentSize() int {
 	return int(params.K) * internal.SingleCommitmentSize
 }
 
-// GetThresholdParams returns recommended parameters for threshold ML-DSA-44
+// GetThresholdParams returns recommended parameters for threshold ML-DSA-65
 // given threshold T and total number of parties N.
 // Returns error if parameters are invalid.
 func GetThresholdParams(t, n uint8) (*ThresholdParams, error) {
@@ -49,10 +49,10 @@ func GetThresholdParams(t, n uint8) (*ThresholdParams, error) {
 	return &params, nil
 }
 
-// PublicKey is the type of ML-DSA-44 public key
+// PublicKey is the type of ML-DSA-65 public key
 type PublicKey internal.PublicKey
 
-// PrivateKey is the type of ML-DSA-44 private key
+// PrivateKey is the type of ML-DSA-65 private key
 type PrivateKey internal.PrivateKey
 
 // [THRESHOLD]
@@ -374,7 +374,7 @@ func (pk *PublicKey) MarshalBinary() ([]byte, error) {
 // Unpacks the public key from data.
 func (pk *PublicKey) UnmarshalBinary(data []byte) error {
 	if len(data) != PublicKeySize {
-		return errors.New("packed public key must be of mldsa44.PublicKeySize bytes")
+		return errors.New("packed public key must be of mldsa65.PublicKeySize bytes")
 	}
 	var buf [PublicKeySize]byte
 	copy(buf[:], data)
@@ -385,7 +385,7 @@ func (pk *PublicKey) UnmarshalBinary(data []byte) error {
 // // Unpacks the private key from data.
 // func (sk *PrivateKey) UnmarshalBinary(data []byte) error {
 // 	if len(data) != PrivateKeySize {
-// 		return errors.New("packed private key must be of mldsa44.PrivateKeySize bytes")
+// 		return errors.New("packed private key must be of mldsa65.PrivateKeySize bytes")
 // 	}
 // 	var buf [PrivateKeySize]byte
 // 	copy(buf[:], data)

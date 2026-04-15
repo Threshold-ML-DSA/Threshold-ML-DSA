@@ -1,6 +1,6 @@
 // Code generated from pkg.templ.go. DO NOT EDIT.
 
-// mldsa65 implements NIST signature scheme ML-DSA-44 as defined in FIPS204.
+// mldsa65 implements NIST signature scheme ML-DSA-65 as defined in FIPS204.
 package thmldsa65
 
 import (

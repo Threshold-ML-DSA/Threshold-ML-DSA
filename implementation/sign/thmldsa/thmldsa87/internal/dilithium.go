@@ -88,7 +88,7 @@ type PrivateKey struct {
 	s2h VecK // NTT(s₂)
 }
 
-// ThresholdParams contains parameters for threshold ML-DSA-44
+// ThresholdParams contains parameters for threshold ML-DSA-87
 type ThresholdParams struct {
 	// T is the threshold - minimum number of parties needed to sign
 	T uint8
@@ -120,7 +120,7 @@ func defaultThresholdParams() *ThresholdParams {
 	}
 }
 
-// GetThresholdParams returns recommended parameters for threshold ML-DSA-44
+// GetThresholdParams returns recommended parameters for threshold ML-DSA-87
 // given threshold T and total number of parties N.
 // Returns error if parameters are invalid.
 func GetThresholdParams(t, n uint8) (*ThresholdParams, error) {
@@ -137,7 +137,7 @@ func GetThresholdParams(t, n uint8) (*ThresholdParams, error) {
 
 	var k uint16
 	var r, rPrime float64
-	nu := float64(3.)
+	nu := float64(7.)
 	if t == 2 && n == 2 { // N = 2
 		k = uint16(3)   // Number of iterations
 		r = 503119      // Primary radius
