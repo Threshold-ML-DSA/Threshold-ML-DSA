@@ -144,8 +144,8 @@ func GetThresholdParams(t, n uint8) (*ThresholdParams, error) {
 		rPrime = 501613 // Secondary radius
 	} else if n == 3 { // N = 3
 		ks := []uint16{5, 9}
-		rs := []float64{540212, 540378}
-		rPs := []float64{510387, 510504}
+		rs := []float64{540212, 510387}
+		rPs := []float64{540378, 510504}
 		k = ks[t-2]
 		r = rs[t-2]
 		rPrime = rPs[t-2]
