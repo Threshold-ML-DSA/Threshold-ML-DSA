@@ -160,6 +160,15 @@ func Round2(sk *PrivateKey, act uint8, msg, ctx []byte, msgsrd1 [][]byte, strd1 
 
 // Compute a response to sign (msg, ctx) according to the commitments in cmts, with randomness cmtst.
 func Round3(sk *PrivateKey, msgsrd2 [][]byte, strd1 *StRound1, strd2 *StRound2, params *ThresholdParams) ([]byte, error) {
+	// [THRESHOLD] The per-attempt randomness held in strd1 (cmtst) must be used
+	// at most once. Two responses from the same randomness under two different
+	// challenges reveal the secret share via z - z' = (c - c')·s, so a reused
+	// StRound1 (whose cmtst was cleared by a previous successful Round3) is
+	// rejected here.
+	if strd1.cmtst == nil {
+		return nil, errors.New("thmldsa: StRound1 already used; call Round1 once per signing attempt")
+	}
+
 	wtmp := make([]internal.VecK, params.K)
 	wfinal := make([]internal.VecK, params.K)
 
@@ -194,6 +203,14 @@ func Round3(sk *PrivateKey, msgsrd2 [][]byte, strd1 *StRound1, strd2 *StRound2, 
 	}
 
 	zs := internal.ComputeResponses((*internal.PrivateKey)(sk), strd2.act, strd2.mu, wfinal, strd1.cmtst, (*internal.ThresholdParams)(params))
+
+	// [THRESHOLD] The randomness has now been consumed to produce this response.
+	// Zeroize and invalidate it so any second Round3 on this StRound1 fails the
+	// check at the top of this function instead of leaking the secret share.
+	for i := range strd1.cmtst {
+		strd1.cmtst[i] = internal.FVec{}
+	}
+	strd1.cmtst = nil
 
 	response := make([]byte, params.ResponseSize())
 	internal.PackResponses(zs, response[:])
