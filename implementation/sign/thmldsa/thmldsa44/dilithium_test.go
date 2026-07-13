@@ -75,3 +75,53 @@ func TestThSignMultiKeys(t *testing.T) {
 		}
 	}
 }
+
+// A StRound1 holds the per-attempt signing randomness. Two responses derived
+// from the same StRound1 under two different challenges reveal the secret share
+// via z - z' = (c - c')*s, so Round3 must consume a StRound1 at most once.
+func TestRound3RejectsReusedStRound1(t *testing.T) {
+	var seed [common.SeedSize]byte
+	seed[0] = 1
+	thresholdParams, err := GetThresholdParams(parties, parties)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sks := NewThresholdKeysFromSeed(&seed, thresholdParams)
+	act := uint8((1 << parties) - 1)
+	ctx := []byte{}
+
+	// Round 1: each party commits once.
+	msgs1 := make([][]byte, parties)
+	st1s := make([]StRound1, parties)
+	for i := 0; i < parties; i++ {
+		msgs1[i], st1s[i], err = Round1(&sks[i], thresholdParams)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Round 2 for message A (the revealed commitment is message-independent).
+	msgs2 := make([][]byte, parties)
+	st2s := make([]StRound2, parties)
+	for i := 0; i < parties; i++ {
+		msgs2[i], st2s[i], err = Round2(&sks[i], act, []byte("message A"), ctx, msgs1, &st1s[i], thresholdParams)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// First Round 3 on party 0's StRound1 must succeed.
+	if _, err := Round3(&sks[0], msgs2, &st1s[0], &st2s[0], thresholdParams); err != nil {
+		t.Fatalf("first Round3 failed: %v", err)
+	}
+
+	// Reuse the same StRound1 for a different message: Round2 again, then Round3.
+	// The second Round3 must be rejected rather than emitting a second response.
+	_, st2b, err := Round2(&sks[0], act, []byte("message B"), ctx, msgs1, &st1s[0], thresholdParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Round3(&sks[0], msgs2, &st1s[0], &st2b, thresholdParams); err == nil {
+		t.Fatal("second Round3 on a reused StRound1 succeeded; nonce reuse not prevented")
+	}
+}
