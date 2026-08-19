@@ -67,7 +67,7 @@ go run main.go type=d iter=<iterations> t=<threshold> n=<parties> p=<parameter-s
 
 ```bash
 # Run 100 iterations with threshold 3 out of 5 parties for ML-DSA-44
-go run main.go type=d iter=100 t=3 n=5 -p=44
+go run main.go type=d iter=100 t=3 n=5 p=44
 ```
 
 ### Network Benchmarks (LAN/WAN)
