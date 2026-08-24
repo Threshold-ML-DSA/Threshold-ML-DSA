@@ -8,6 +8,8 @@ import (
 	cryptoRand "crypto/rand"
 	"errors"
 	"io"
+	"math/bits"
+	"sync/atomic"
 
 	"github.com/cloudflare/circl/sign"
 	"github.com/cloudflare/circl/internal/sha3"
@@ -55,16 +57,81 @@ type PublicKey internal.PublicKey
 // PrivateKey is the type of ML-DSA-65 private key
 type PrivateKey internal.PrivateKey
 
-// [THRESHOLD]
-type StRound1 struct {
+// [THRESHOLD] ErrStateAlreadyUsed is returned by Round2 and Round3 when the
+// signing state they are given is empty or has already been consumed. Every
+// signing attempt has to start from a fresh Round1: two responses computed
+// from the same commitment randomness under two different challenges reveal
+// the secret share of the signer, as z - z' = (c - c')·s.
+var ErrStateAlreadyUsed = errors.New("thmldsa: signing state is empty or already used; each signing attempt needs a fresh Round1")
+
+// [THRESHOLD] attemptState holds the secret state of a single signing attempt:
+// the commitment randomness cmtst, and the commitment wbuf it opens to. It is
+// referenced by pointer from StRound1 and StRound2, so that every copy of a
+// round state shares one "used" flag and consuming any copy consumes them all.
+//
+// The state moves forward one round at a time: Round2 takes it out of the
+// StRound1 it is given and stores it in the StRound2 it returns, and Round3
+// consumes it and zeroizes the randomness. It is therefore used for at most
+// one response.
+type attemptState struct {
+	used atomic.Bool
 	wbuf []byte
 	cmtst []internal.FVec
 }
 
+// take marks st as consumed and returns it, or returns nil if st is empty or
+// was already consumed. The flag is set atomically, so that two callers racing
+// on the same attempt cannot both take it: one wins and the other is rejected.
+func (st *attemptState) take() *attemptState {
+	if st == nil || !st.used.CompareAndSwap(false, true) {
+		return nil
+	}
+	return st
+}
+
+// move consumes st and returns a new attemptState holding its contents, to
+// hand the signing attempt over to the next round.
+func (st *attemptState) move() *attemptState {
+	if st.take() == nil {
+		return nil
+	}
+	next := &attemptState{wbuf: st.wbuf, cmtst: st.cmtst}
+	st.wbuf, st.cmtst = nil, nil
+	return next
+}
+
+// zeroize overwrites the commitment randomness and drops the attempt state.
+// The commitment itself is public, so it is only dropped.
+func (st *attemptState) zeroize() {
+	for i := range st.cmtst {
+		st.cmtst[i] = internal.FVec{}
+	}
+	st.cmtst = nil
+	st.wbuf = nil
+}
+
+// [THRESHOLD] StRound1 is the state of a signing attempt between Round1 and
+// Round2. It carries the secret commitment randomness of the attempt, and is
+// consumed by Round2.
+//
+// It deliberately has no serialized form: single use can only be enforced in
+// memory, so a caller that persists an attempt and restores it holds a state
+// whose "used" flag says whatever was persisted. Such a caller is responsible
+// for making sure each Round1 output yields at most one response, for instance
+// by durably marking the state spent before a response leaves the process.
+type StRound1 struct {
+	st *attemptState
+}
+
+// [THRESHOLD] StRound2 is the state of a signing attempt between Round2 and
+// Round3. It takes the secret commitment randomness over from StRound1, and is
+// consumed by Round3, which zeroizes that randomness. Like StRound1 it has no
+// serialized form, for the reason given there.
 type StRound2 struct {
 	hashes [][32]byte
 	mu [64]byte
 	act uint8
+	st *attemptState
 }
 
 // GenerateThresholdKey generates a public key and N private key shares for threshold signing
@@ -103,6 +170,10 @@ func NewThresholdKeysFromSeed(seed *[SeedSize]byte, params *ThresholdParams) (*P
 }
 
 // Sample a commitment w.
+//
+// [THRESHOLD] The returned StRound1 holds the commitment randomness of this
+// signing attempt and must be used for exactly one attempt: call Round1 again
+// for every new attempt, including after a failed or abandoned one.
 func Round1(sk *PrivateKey, params *ThresholdParams) ([]byte, StRound1, error) {
 	var rhop [64]byte
 	_, err := cryptoRand.Read(rhop[:])
@@ -127,15 +198,37 @@ func Round1(sk *PrivateKey, params *ThresholdParams) ([]byte, StRound1, error) {
 	s.Write(wbuf)
 	s.Read(cmt[:])
 
-	return cmt, StRound1{wbuf, tmpcmtst}, nil
+	return cmt, StRound1{st: &attemptState{wbuf: wbuf, cmtst: tmpcmtst}}, nil
 }
 
-// Sample a commitment w.
+// Reveal the commitment of round 1 and bind it to (msg, ctx).
+//
+// [THRESHOLD] Round2 consumes strd1: the state of the signing attempt moves
+// into the returned StRound2, and any further use of strd1 (or of a copy of
+// it) fails with ErrStateAlreadyUsed. This is what stops the same commitment
+// randomness from being bound to a second message.
 func Round2(sk *PrivateKey, act uint8, msg, ctx []byte, msgsrd1 [][]byte, strd1 *StRound1, params *ThresholdParams) ([]byte, StRound2, error) {
 
 	if len(ctx) > 255 {
 		return nil, StRound2{}, sign.ErrContextTooLong
 	}
+
+	// The round 1 messages are commitment hashes broadcast by the other
+	// signers: reject malformed ones here rather than panicking on the
+	// conversion below.
+	for _, h := range msgsrd1 {
+		if len(h) != 32 {
+			return nil, StRound2{}, errors.New("wrong commitment hash length")
+		}
+	}
+
+	// [THRESHOLD] Move the attempt state out of strd1, which is spent from
+	// here on. Nothing below can fail, so the state is never lost to an error.
+	st := strd1.st.move()
+	if st == nil {
+		return nil, StRound2{}, ErrStateAlreadyUsed
+	}
+	strd1.st = nil
 
 	// Store hashes for future use
 	st2 := StRound2{}
@@ -154,19 +247,30 @@ func Round2(sk *PrivateKey, act uint8, msg, ctx []byte, msgsrd1 [][]byte, strd1 
 		w.Write(msg)
 	})
 	st2.act = act
+	st2.st = st
 
-	return strd1.wbuf, st2, nil
+	return st.wbuf, st2, nil
 }
 
 // Compute a response to sign (msg, ctx) according to the commitments in cmts, with randomness cmtst.
-func Round3(sk *PrivateKey, msgsrd2 [][]byte, strd1 *StRound1, strd2 *StRound2, params *ThresholdParams) ([]byte, error) {
-	// [THRESHOLD] The per-attempt randomness held in strd1 (cmtst) must be used
-	// at most once. Two responses from the same randomness under two different
-	// challenges reveal the secret share via z - z' = (c - c')·s, so a reused
-	// StRound1 (whose cmtst was cleared by a previous successful Round3) is
-	// rejected here.
-	if strd1.cmtst == nil {
-		return nil, errors.New("thmldsa: StRound1 already used; call Round1 once per signing attempt")
+//
+// [THRESHOLD] Round3 consumes strd2, and does so even when it goes on to
+// return an error: answering a second set of revealed commitments would answer
+// a second challenge with the same commitment randomness, which reveals the
+// secret share. A failed attempt therefore has to restart from Round1.
+func Round3(sk *PrivateKey, msgsrd2 [][]byte, strd2 *StRound2, params *ThresholdParams) ([]byte, error) {
+	// [THRESHOLD] Take the attempt state out of strd2 up front, so that every
+	// path out of this function leaves the state spent and the randomness
+	// zeroized, and any further use of strd2 (or of a copy of it) is rejected.
+	st := strd2.st.take()
+	if st == nil {
+		return nil, ErrStateAlreadyUsed
+	}
+	strd2.st = nil
+	defer st.zeroize()
+
+	if len(msgsrd2) != len(strd2.hashes) || len(msgsrd2) != bits.OnesCount8(strd2.act) {
+		return nil, errors.New("wrong number of commitments")
 	}
 
 	wtmp := make([]internal.VecK, params.K)
@@ -181,7 +285,7 @@ func Round3(sk *PrivateKey, msgsrd2 [][]byte, strd1 *StRound1, strd2 *StRound2, 
 		}
 
 		if len(msgsrd2[i]) != params.CommitmentSize() {
-			panic("wrong commitment byte length")
+			return nil, errors.New("wrong commitment byte length")
 		}
 
 		// Check that the commitments correspond to the one hashed in round 1
@@ -202,15 +306,7 @@ func Round3(sk *PrivateKey, msgsrd2 [][]byte, strd1 *StRound1, strd2 *StRound2, 
 		j++
 	}
 
-	zs := internal.ComputeResponses((*internal.PrivateKey)(sk), strd2.act, strd2.mu, wfinal, strd1.cmtst, (*internal.ThresholdParams)(params))
-
-	// [THRESHOLD] The randomness has now been consumed to produce this response.
-	// Zeroize and invalidate it so any second Round3 on this StRound1 fails the
-	// check at the top of this function instead of leaking the secret share.
-	for i := range strd1.cmtst {
-		strd1.cmtst[i] = internal.FVec{}
-	}
-	strd1.cmtst = nil
+	zs := internal.ComputeResponses((*internal.PrivateKey)(sk), strd2.act, strd2.mu, wfinal, st.cmtst, (*internal.ThresholdParams)(params))
 
 	response := make([]byte, params.ResponseSize())
 	internal.PackResponses(zs, response[:])
@@ -230,7 +326,7 @@ func Combine(pk *PublicKey, msg, ctx []byte, cmts [][]byte, resps [][]byte, sig 
 	// Compute wfinal
 	for i := 0; i < len(cmts); i++ {
 		if len(cmts[i]) != params.CommitmentSize() {
-			panic("wrong commitment byte length")
+			return false // wrong commitment byte length
 		}
 
 		internal.UnpackW(wtmp, cmts[i][:])
@@ -240,7 +336,7 @@ func Combine(pk *PublicKey, msg, ctx []byte, cmts [][]byte, resps [][]byte, sig 
 	// Compute zfinal
 	for i := 0; i < len(resps); i++ {
 		if len(resps[i]) != params.ResponseSize() {
-			panic("wrong commitment byte length")
+			return false // wrong response byte length
 		}
 
 		internal.UnpackResponses(ztmp, resps[i][:])

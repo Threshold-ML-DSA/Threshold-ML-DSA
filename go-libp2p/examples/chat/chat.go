@@ -285,7 +285,6 @@ func runProtocolLoop(rw *bufio.ReadWriter, state *ProtocolState) {
 		msg3, err := thmldsa44.Round3(
 			&state.SKs[state.ID],
 			state.Msgs2,
-			&state.Strd1,
 			&state.Strd2,
 			state.Params,
 		)
