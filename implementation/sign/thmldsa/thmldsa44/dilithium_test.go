@@ -252,7 +252,11 @@ func TestRound3RejectsMalformedInput(t *testing.T) {
 }
 
 // Two callers racing on the same attempt must not both get a response out of
-// it. Run under -race as well.
+// it. The attempt is claimed with an atomic compare-and-swap, so this holds by
+// construction; the test exercises the concurrent path, and is worth running
+// under -race, but it cannot reliably catch a non-atomic claim on its own: the
+// window such a claim would open is far narrower than the scheduling jitter
+// between these goroutines.
 func TestRound3ConcurrentReuse(t *testing.T) {
 	sks, params, act := testKeys(t)
 	msgs1, st1s := attempt(t, sks, params)
@@ -260,16 +264,19 @@ func TestRound3ConcurrentReuse(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var responses atomic.Int64
-	for i := 0; i < 8; i++ {
+	start := make(chan struct{})
+	for i := 0; i < 16; i++ {
 		st := st2s[0] // a copy each, all sharing the one attempt
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			<-start // fire together, so a non-atomic claim gets a chance to race
 			if _, err := Round3(&sks[0], msgs2, &st, params); err == nil {
 				responses.Add(1)
 			}
 		}()
 	}
+	close(start)
 	wg.Wait()
 
 	if got := responses.Load(); got != 1 {
