@@ -472,7 +472,7 @@ func (c *ChatNode) runSigningSession() {
 		msgs2All := c.collectRound("R2", a)
 		msgs2 := c.filterByAct(msgs2All)
 		if c.isActive(c.partyIndex) {
-			msg3, err := thmldsa44.Round3(c.sk, msgs2, &st1, &st2, c.params)
+			msg3, err := thmldsa44.Round3(c.sk, msgs2, &st2, c.params)
 			if err != nil {
 				log.Printf("R3 err a=%d: %v", a, err)
 				continue

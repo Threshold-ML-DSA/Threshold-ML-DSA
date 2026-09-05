@@ -103,7 +103,7 @@ func LocalThresholdDilithiumRun(iter int) {
 				for j := range msgs3 {
 					start = time.Now()
 
-					msgs3[j], err = thmldsa44.Round3(&sks[j], msgs2, &strd1s[j], &strd2s[j], params)
+					msgs3[j], err = thmldsa44.Round3(&sks[j], msgs2, &strd2s[j], params)
 					signRound3TotalDur[j] += time.Since(start)
 				}
 				if err != nil {
@@ -235,7 +235,7 @@ func LocalThresholdDilithiumRun(iter int) {
 				for j := range msgs3 {
 					start = time.Now()
 
-					msgs3[j], err = thmldsa65.Round3(&sks[j], msgs2, &strd1s[j], &strd2s[j], params)
+					msgs3[j], err = thmldsa65.Round3(&sks[j], msgs2, &strd2s[j], params)
 					signRound3TotalDur[j] += time.Since(start)
 				}
 				if err != nil {
@@ -367,7 +367,7 @@ func LocalThresholdDilithiumRun(iter int) {
 				for j := range msgs3 {
 					start = time.Now()
 
-					msgs3[j], err = thmldsa87.Round3(&sks[j], msgs2, &strd1s[j], &strd2s[j], params)
+					msgs3[j], err = thmldsa87.Round3(&sks[j], msgs2, &strd2s[j], params)
 					signRound3TotalDur[j] += time.Since(start)
 				}
 				if err != nil {

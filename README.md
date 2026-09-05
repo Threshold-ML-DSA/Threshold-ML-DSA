@@ -8,6 +8,8 @@ This repository contains implementations from the research paper:
 
 **These implementations are academic proof-of-concept prototypes, have not received careful code review, and are not ready for production use.**
 
+**Signing state is single use.** The state returned by `Round1` carries the commitment randomness of one signing attempt: `Round2` moves it into the `StRound2` it returns, `Round3` consumes that and zeroizes the randomness, and reusing either returns `ErrStateAlreadyUsed` — two responses derived from the same randomness under two different challenges would reveal the signer's secret share, since `z - z' = (c - c')·s`. This can only be enforced in memory, so a caller that persists round state and restores it (from disk, from a snapshot, from a replicated process) is responsible for making sure each `Round1` output yields at most one response.
+
 ## Structure
 
 This repository includes the following implementation:
